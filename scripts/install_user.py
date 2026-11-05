@@ -12,15 +12,14 @@ def main():
         raise SystemExit("uv is missing; install it before installing the desktop launcher.")
     binary = home / ".local/bin/free-video-downloader"
     applications = home / ".local/share/applications"
-    icons = home / ".local/share/icons/hicolor/scalable/apps"
+    icons = home / ".local/share/icons/hicolor/512x512/apps"
     desktop = applications / "free-video-downloader.desktop"
-    icon = icons / "free-video-downloader.svg"
+    icon = icons / "downloader-app.png"
     binary.parent.mkdir(parents=True, exist_ok=True)
     applications.mkdir(parents=True, exist_ok=True)
     icons.mkdir(parents=True, exist_ok=True)
-    icon.write_bytes((app_root / "app/assets/downloader.svg").read_bytes())
+    icon.write_bytes((app_root / "app/assets/download.png").read_bytes())
     project = shlex.quote(str(app_root))
-    icon_entry = str(icon).replace("\\", "\\\\").replace(" ", "\\s").replace("\t", "\\t")
     binary.write_text("#!/bin/sh\nset -eu\nexec " + shlex.quote(uv_executable) + " run --locked --project " + project + " free-video-downloader \"$@\"\n")
     binary.chmod(0o755)
     # Desktop Exec quoting follows the Desktop Entry spec and supports spaces in home paths.
@@ -28,11 +27,13 @@ def main():
     desktop.write_text(
         "[Desktop Entry]\n"
         "Type=Application\n"
-        "Name=Free Video Downloader\n"
+        "Name=Downloader\n"
+        "GenericName=Video Downloader\n"
+        "Keywords=downloader;video;audio;YouTube;MP3;MP4;\n"
         "Comment=Download a video at the resolution you choose\n"
         f'Exec="{executable}" %u\n'
         "Terminal=false\n"
-        f"Icon={icon_entry}\n"
+        f"Icon={icon}\n"
         "MimeType=x-scheme-handler/free-video-downloader;\n"
         "Categories=AudioVideo;Video;\n"
         "StartupNotify=true\n"

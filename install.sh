@@ -7,7 +7,7 @@ FVD_SOURCE_DIR="$FVD_DATA_ROOT/source"
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     cat <<'HELP'
-Install Free Video Downloader for the current Linux user.
+Install Downloader for the current Linux user.
 
 Usage: ./install.sh
 

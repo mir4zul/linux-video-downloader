@@ -1,7 +1,7 @@
 [project]
 name = "free-video-downloader"
 version = "0.1.0"
-description = "A Linux desktop video and audio downloader"
+description = "A cross-platform desktop video and audio downloader"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -20,4 +20,4 @@ build-backend = "setuptools.build_meta"
 include = ["app*"]
 
 [tool.setuptools.package-data]
-app = ["assets/*.svg"]
+app = ["assets/*.svg", "assets/*.png"]

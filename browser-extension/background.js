@@ -5,7 +5,7 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: MENU_ID,
-      title: "Download video with Free Video Downloader",
+      title: "Send video to Downloader",
       contexts: ["video"]
     });
   });

@@ -5,7 +5,9 @@ FVD_HOME_DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
 FVD_SOURCE_DIR="$FVD_HOME_DATA/free-video-downloader/source"
 FVD_LAUNCHER="$HOME/.local/bin/free-video-downloader"
 FVD_DESKTOP_ENTRY="$HOME/.local/share/applications/free-video-downloader.desktop"
-FVD_ICON="$HOME/.local/share/icons/hicolor/scalable/apps/free-video-downloader.svg"
+FVD_ICON="$HOME/.local/share/icons/hicolor/512x512/apps/downloader-app.png"
+FVD_OLD_ICON="$HOME/.local/share/icons/hicolor/512x512/apps/download.png"
+FVD_OLD_SVG_ICON="$HOME/.local/share/icons/hicolor/scalable/apps/free-video-downloader.svg"
 
 if [[ "$(id -u)" -eq 0 ]]; then
     printf '%s\n' 'Run this uninstaller as the same normal user who installed the app, not with sudo.' >&2
@@ -15,7 +17,7 @@ fi
 case "${1:-}" in
     --help|-h)
         cat <<'HELP'
-Uninstall Free Video Downloader for the current user.
+Uninstall Downloader for the current user.
 
 Usage: ./uninstall.sh [--yes]
 
@@ -42,7 +44,7 @@ HELP
         ;;
 esac
 
-rm -f -- "$FVD_LAUNCHER" "$FVD_DESKTOP_ENTRY" "$FVD_ICON"
+rm -f -- "$FVD_LAUNCHER" "$FVD_DESKTOP_ENTRY" "$FVD_ICON" "$FVD_OLD_ICON" "$FVD_OLD_SVG_ICON"
 if [[ -d "$FVD_SOURCE_DIR/.git" ]]; then
     rm -rf -- "$FVD_SOURCE_DIR"
 fi
@@ -52,5 +54,5 @@ if [[ -n "$FVD_DESKTOP_DATABASE" && -d "$HOME/.local/share/applications" ]]; the
     "$FVD_DESKTOP_DATABASE" "$HOME/.local/share/applications" >/dev/null 2>&1 || true
 fi
 
-printf '%s\n' 'Free Video Downloader has been uninstalled for this user.'
+printf '%s\n' 'Downloader has been uninstalled for this user.'
 printf 'Kept download history and settings at: %s/free-video-downloader/state.sqlite3\n' "$FVD_HOME_DATA"

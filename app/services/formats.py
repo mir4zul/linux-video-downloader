@@ -1,6 +1,6 @@
 """Turn extractor metadata into explicit, downloadable output choices."""
 from dataclasses import dataclass
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 
 def validate_url(value):
@@ -42,9 +42,10 @@ class OutputChoice:
     estimated_size: int | None = None
     height: int | None = None
     width: int | None = None
+    direct: bool = False
 
 
-def build_choices(info):
+def build_choices(info, source_url=None):
     if not isinstance(info, dict) or info.get("_type") in ("playlist", "multi_video"):
         raise ValueError("Please use a single video link; playlists are not supported yet.")
     if info.get("is_live") or info.get("live_status") in ("is_live", "is_upcoming"):
@@ -102,5 +103,34 @@ def build_choices(info):
                 f"MP3 · {bitrate} kbps · Estimated output: {size_text(size)} · Conversion required. "
                 "Higher bitrate does not improve the source quality.", bitrate, int(size) or None))
     if not videos and not audios:
-        raise ValueError("No usable MP4 with audio or audio source was found. Try another video.")
+        # Plain file servers often provide no codec metadata for a direct media URL.
+        # Keep its declared container and let the downloader verify the actual streams.
+        path = unquote(urlsplit(source_url or "").path)
+        extension = path.rsplit("/", 1)[-1].rsplit(".", 1)[-1].lower() if "." in path.rsplit("/", 1)[-1] else ""
+        direct_containers = {"mp4", "webm", "mkv", "mov", "flv", "avi", "ogv", "ts", "mpeg", "3gp"}
+        if extension in direct_containers:
+            direct_info = info if isinstance(info, dict) else {}
+            formats = direct_info.get("formats") or []
+            format_id = direct_info.get("format_id") or next(
+                (item.get("format_id") for item in formats if item.get("format_id")), "best")
+            title = direct_info.get("title") or path.rsplit("/", 1)[-1].rsplit(".", 1)[0] or "Video"
+            size = direct_info.get("filesize") or direct_info.get("filesize_approx")
+            videos.append(OutputChoice(
+                f"Original file · {extension.upper()}", str(format_id), extension,
+                f"{extension.upper()} · Original file · Source did not provide resolution or codec details. "
+                f"The downloaded file will be checked before it is saved. · {size_text(size)}",
+                estimated_size=size, direct=True))
+            source = next((item for item in formats if item.get("format_id")), {})
+            selector = str(format_id if format_id else source.get("format_id", "best"))
+            for bitrate in (128, 192, 256, 320):
+                seconds = direct_info.get("duration") or 0
+                estimate = int(seconds * bitrate * 1000 / 8) if seconds else None
+                audios.append(OutputChoice(
+                    f"MP3 · {bitrate} kbps", selector, "mp3",
+                    f"MP3 · {bitrate} kbps · Conversion required. "
+                    "Higher bitrate does not improve the source quality. "
+                    + (f"Estimated output: {size_text(estimate)}" if estimate else "Output size unknown"),
+                    bitrate=bitrate, estimated_size=estimate, direct=True))
+        if not videos and not audios:
+            raise ValueError("No usable video or audio format was found. Try another link.")
     return videos, audios

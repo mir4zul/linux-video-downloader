@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 
 from PySide6.QtCore import Qt, QStandardPaths, QUrl, QUrlQuery
 from PySide6.QtGui import QPixmap
@@ -60,7 +61,7 @@ class MainWindow(QMainWindow):
         self.audio_choices = []
         self.thumbnail = ThumbnailLoader(self)
         self.thumbnail.loaded.connect(self.show_thumbnail)
-        self.setWindowTitle("Free Video Downloader")
+        self.setWindowTitle("Downloader")
         self.resize(900, 820)
         self.setMinimumSize(620, 540)
         self.setStyleSheet(STYLE)
@@ -74,7 +75,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(body)
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(18)
-        title = label("Free Video Downloader")
+        title = label("Downloader")
         title.setObjectName("title")
         layout.addWidget(title)
         layout.addWidget(label("Choose a video resolution or download audio only.", True))
@@ -245,7 +246,7 @@ class MainWindow(QMainWindow):
 
     def analysis_succeeded(self, info):
         try:
-            videos, audios = build_choices(info)
+            videos, audios = build_choices(info, self.url.text().strip())
         except ValueError as error:
             self.status.setText(str(error))
             return
@@ -302,7 +303,7 @@ class MainWindow(QMainWindow):
             "duration": self.info.get("duration") if self.info else None,
             "title": self.info.get("title") if self.info else "Video", "quality": choice.label,
             "fragments": self.queue_panel.fragments.value(), "estimated_size": choice.estimated_size,
-            "height": choice.height, "width": choice.width}
+            "height": choice.height, "width": choice.width, "direct": choice.direct}
         try:
             task = self.queue.add(config)
             self.queue_panel.tree.setCurrentItem(self.queue_panel.rows[task["id"]])
@@ -319,10 +320,12 @@ class MainWindow(QMainWindow):
 
     def refresh_dependencies(self):
         results = check_dependencies()
-        missing = sum(not item.available for item in results)
+        missing = sum(not item.available and not item.optional for item in results)
+        aria2_missing = any(item.optional and not item.available for item in results)
         self.dependency_status.setText(
-            f"Setup: {missing} missing component(s)" if missing else
-            "Setup: components found (download compatibility not yet tested)"
+            f"Setup: {missing} required component(s) missing" if missing else
+            "Setup: ready · aria2c optional speed-up missing" if aria2_missing else
+            "Setup: ready · aria2c speed-up available"
         )
         return results
 
@@ -333,18 +336,31 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(dialog)
         text = QTextBrowser()
         report = "\n".join(
-            f"{'FOUND' if item.available else 'MISSING'}  {item.name}\n    {item.detail}"
+            f"{'FOUND' if item.available else 'OPTIONAL' if item.optional else 'MISSING'}  {item.name}\n    {item.detail}"
             for item in self.refresh_dependencies()
         )
-        text.setPlainText(report + "\n\nSetup instructions\n"
-            "Python packages: run uv sync in the project folder.\n"
-            "Arch: sudo pacman -Syu ffmpeg deno\n"
-            "Ubuntu: sudo apt update && sudo apt install ffmpeg\n"
-            "Deno installation: https://docs.deno.com/runtime/getting_started/installation/\n\n"
-            "If Deno is missing, an installed Node runtime is enabled for analysis.\n"
-            "Reopen this check after installing components. Restart the app if PATH changed.\n"
-            "This checks availability, not runtime versions or real download compatibility.\n"
-            "Nothing is installed automatically.")
+        if os.name == "nt":
+            instructions = (
+                "Windows installer builds include FFmpeg, FFprobe and Deno.\n"
+                "For development from source, install FFmpeg and Deno, then run uv sync.\n"
+                "Deno installation: https://docs.deno.com/runtime/getting_started/installation/\n"
+                "FFmpeg Windows builds: https://www.gyan.dev/ffmpeg/builds/\n"
+                "Restart the app after changing PATH. Nothing is installed automatically."
+            )
+        else:
+            instructions = (
+                "Python packages: run uv sync in the project folder.\n"
+                "Arch: sudo pacman -Syu ffmpeg deno\n"
+                "Ubuntu: sudo apt update && sudo apt install ffmpeg\n"
+                "Optional direct-file speed: install aria2 (Arch: sudo pacman -S aria2; Ubuntu: sudo apt install aria2). "
+                "The source server must support byte ranges.\n"
+                "Deno installation: https://docs.deno.com/runtime/getting_started/installation/\n\n"
+                "If Deno is missing, an installed Node runtime is enabled for analysis.\n"
+                "Reopen this check after installing components. Restart the app if PATH changed.\n"
+                "This checks availability, not runtime versions or real download compatibility.\n"
+                "Nothing is installed automatically."
+            )
+        text.setPlainText(report + "\n\nSetup instructions\n" + instructions)
         layout.addWidget(text)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(dialog.reject)

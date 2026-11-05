@@ -8,4 +8,4 @@ command -v ffprobe >/dev/null 2>&1 || { printf '%s\n' 'ffprobe is missing; insta
 mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
 uv sync --locked --project "$APP_ROOT"
 python3 "$APP_ROOT/scripts/install_user.py" "$APP_ROOT"
-printf '%s\n' 'Free Video Downloader installed for this user.' 'Launch it from the desktop app menu or run: ~/.local/bin/free-video-downloader'
+printf '%s\n' 'Downloader installed for this user.' 'Launch it from the desktop app menu or run: ~/.local/bin/free-video-downloader'

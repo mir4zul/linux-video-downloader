@@ -1,6 +1,9 @@
 """Asynchronous, cancellable metadata extraction; never downloads media."""
 import json
+import os
+import subprocess
 import sys
+from pathlib import Path
 from shutil import which
 
 from PySide6.QtCore import QObject, QProcess, QTimer, Signal
@@ -28,8 +31,13 @@ class AnalysisJob(QObject):
         super().__init__(parent)
         self.arguments = analysis_arguments(url)
         self.process = QProcess(self)
-        self.process.setProgram(sys.executable)
-        self.process.setArguments(self.arguments)
+        if getattr(sys, "frozen", False):
+            worker = os.fspath(Path(sys.executable).resolve().parent / "worker" / "DownloaderWorker.exe")
+            self.process.setProgram(worker)
+            self.process.setArguments(["--fvd-analysis-worker", *self.arguments[2:]])
+        else:
+            self.process.setProgram(sys.executable)
+            self.process.setArguments(self.arguments)
         self.output = bytearray()
         self.errors = bytearray()
         self.reason = None
@@ -59,7 +67,17 @@ class AnalysisJob(QObject):
         if self.done:
             return
         self.reason = reason
-        self.process.kill()
+        pid = self.process.processId()
+        if os.name == "nt" and pid:
+            try:
+                subprocess.Popen(["taskkill", "/F", "/T", "/PID", str(pid)],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL,
+                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            except OSError:
+                self.process.kill()
+        else:
+            self.process.kill()
 
     def process_error(self, error):
         if error == QProcess.ProcessError.FailedToStart:

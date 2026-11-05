@@ -1,22 +1,22 @@
 # Chrome Web Store listing draft
 
-**Name:** Free Video Downloader
+**Name:** Download Video Helper
 
-**Short description:** Send a video link from your browser to the Free Video Downloader Linux desktop app.
+**Short description:** Send a video link from your browser to the Downloader Linux desktop app.
 
 **Category:** Productivity
 
 **Detailed description:**
 
-Free Video Downloader connects a Chromium browser to the Free Video Downloader desktop app for Linux. Right-click a video and choose “Download video with Free Video Downloader” to open that link in the desktop app. Review the formats provided by the source, then choose a video resolution or audio-only MP3 option in the app.
+Download Video Helper connects a Chromium browser to the Downloader desktop app for Linux. Right-click a video and choose “Send video to Downloader” to open that link in the desktop app. Review the formats provided by the source, then choose a video resolution or audio-only MP3 option in the app.
 
-The extension requires the Free Video Downloader desktop app to be installed. The browser may show a confirmation when opening the app. For YouTube pages, the extension passes the page link so the desktop app can inspect available formats. For other sites, it passes a direct video URL when available, or the page link.
+The extension requires the Downloader desktop app to be installed. The browser may show a confirmation when opening the app. For YouTube pages, the extension passes the page link so the desktop app can inspect available formats. For other sites, it passes a direct video URL when available, or the page link.
 
 Only download content you own or are authorized to save. This extension does not bypass DRM or sign-in restrictions. Availability depends on the website and the desktop app's supported media sources.
 
-**Single purpose:** Send a video or media-page link selected by the user to the installed Free Video Downloader desktop app.
+**Single purpose:** Send a video or media-page link selected by the user to the installed Downloader desktop app.
 
-**Permission justification — contextMenus:** Used to show the user-invoked “Download video with Free Video Downloader” item on video elements.
+**Permission justification — contextMenus:** Used to show the user-invoked “Send video to Downloader” item on video elements.
 
 **Remote code:** None. The extension does not fetch or execute remote code.
 

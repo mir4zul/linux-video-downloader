@@ -15,8 +15,10 @@ class SetupTests(unittest.TestCase):
 
     def test_missing_tools_are_reported(self):
         with patch("app.services.dependencies.which", return_value=None):
-            missing = {item.name for item in check_dependencies() if not item.available}
+            results = check_dependencies()
+            missing = {item.name for item in results if not item.available and not item.optional}
         self.assertTrue({"ffmpeg", "ffprobe", "JavaScript runtime (Deno / Node)"} <= missing)
+        self.assertTrue(next(item for item in results if item.name.startswith("aria2c")).optional)
 
     def test_folder_cancel_preserves_selection_and_mode_switches(self):
         window = MainWindow(Store(":memory:"))

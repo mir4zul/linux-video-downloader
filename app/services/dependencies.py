@@ -8,6 +8,7 @@ class Dependency:
     name: str
     available: bool
     detail: str
+    optional: bool = False
 
 
 def check_dependencies():
@@ -24,4 +25,7 @@ def check_dependencies():
     path = which("deno") or which("node")
     results.append(Dependency("JavaScript runtime (Deno / Node)", bool(path), path or
                               "Missing — install Deno; see setup guide"))
+    path = which("aria2c")
+    results.append(Dependency("aria2c (optional direct-file speed-up)", bool(path), path or
+                              "Optional — install aria2 for multi-connection HTTP downloads", optional=True))
     return results

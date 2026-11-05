@@ -150,6 +150,51 @@ class QueueTests(unittest.TestCase):
         self.assertFalse(controls["cancel"].isEnabled())
         panel.close()
 
+    def test_row_delete_immediately_removes_history_and_keeps_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "keep.mp4"
+            path.write_bytes(b"media")
+            task = self.add("delete-row")
+            self.queue.cancel(task)
+            task.update(state="completed", path=str(path))
+            self.store.save(task)
+            panel = QueuePanel(self.queue, self.store)
+            panel.row_action(task["id"], "delete")
+            self.assertNotIn(task, self.queue.tasks)
+            self.assertTrue(path.exists())
+            self.assertIn("file was kept", panel.message.text())
+            panel.close()
+
+    def test_paused_and_failed_items_are_visible_in_attention_view_by_default(self):
+        paused = self.add("paused-item")
+        self.queue.cancel(paused)
+        failed = self.add("failed-item")
+        failed.update(state="failed", message="Network error")
+        self.store.save(failed)
+        panel = QueuePanel(self.queue, self.store)
+        self.assertEqual(panel.current_view, "attention")
+        self.assertEqual(panel.attention_view.text(), "Paused / issues · 2")
+        self.assertTrue(panel.attention_view.isChecked())
+        self.assertFalse(panel.rows[paused["id"]].isHidden())
+        self.assertFalse(panel.rows[failed["id"]].isHidden())
+        panel.set_view("history")
+        self.assertTrue(panel.rows[paused["id"]].isHidden())
+        self.assertFalse(panel.empty_card.isHidden())
+        panel.close()
+
+    def test_download_details_expands_and_row_actions_stay_compact(self):
+        task = self.add("compact-actions")
+        self.queue.cancel(task)
+        panel = QueuePanel(self.queue, self.store)
+        header = panel.tree.header()
+        self.assertEqual(header.sectionResizeMode(2).name, "Stretch")
+        self.assertEqual(header.sectionResizeMode(3).name, "Fixed")
+        cell, controls = panel.action_cells[task["id"]]
+        self.assertEqual(cell.layout().count(), 5)  # Four adjacent buttons and a trailing spacer.
+        self.assertTrue(cell.layout().itemAt(4).spacerItem())
+        self.assertLessEqual(sum(button.width() for button in controls.values()), panel.tree.columnWidth(3))
+        panel.close()
+
     def test_open_missing_file_and_desktop_url(self):
         task = self.add("a")
         self.queue.cancel(task)
@@ -183,11 +228,21 @@ class QueueTests(unittest.TestCase):
 class TransferSettingsTests(unittest.TestCase):
     def test_defaults_limits_and_backoff(self):
         options = transfer_options({})
-        self.assertEqual(options["concurrent_fragment_downloads"], 4)
+        self.assertEqual(options["concurrent_fragment_downloads"], 8)
         self.assertIsNone(options["ratelimit"])
         self.assertEqual(options["retries"], 3)
         self.assertEqual([retry_delay(n) for n in (0, 1, 2, 3, 4)], [1, 2, 4, 8, 8])
         self.assertEqual(transfer_options({"fragments": 99})["concurrent_fragment_downloads"], 16)
+
+    def test_direct_files_use_aria2c_ranges_when_available(self):
+        with patch("app.services.download_worker.shutil.which", return_value="/usr/bin/aria2c"):
+            options = transfer_options({"direct": True, "fragments": 6})
+        self.assertEqual(options["external_downloader"], {"http": "aria2c"})
+        self.assertIn("-x6", options["external_downloader_args"]["aria2c"])
+        self.assertIn("-s6", options["external_downloader_args"]["aria2c"])
+        with patch("app.services.download_worker.shutil.which", return_value=None):
+            options = transfer_options({"direct": True})
+        self.assertNotIn("external_downloader", options)
 
     def test_disk_and_permission_errors(self):
         with tempfile.TemporaryDirectory() as directory:

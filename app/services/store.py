@@ -7,8 +7,12 @@ import sqlite3
 
 class Store:
     def __init__(self, path=None):
-        root = Path(os.environ.get("FVD_DATA_DIR") or
-                    Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "free-video-downloader")
+        if os.environ.get("FVD_DATA_DIR"):
+            root = Path(os.environ["FVD_DATA_DIR"])
+        elif os.name == "nt":
+            root = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local")) / "Downloader"
+        else:
+            root = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "free-video-downloader"
         if path is None:
             root.mkdir(parents=True, exist_ok=True)
             path = root / "state.sqlite3"

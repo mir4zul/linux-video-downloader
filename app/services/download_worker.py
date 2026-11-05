@@ -1,5 +1,4 @@
 """Isolated yt-dlp worker. stdout is a JSON-lines event protocol."""
-import fcntl
 import hashlib
 import json
 import os
@@ -19,10 +18,32 @@ def retry_delay(n):
     return min(8, 2 ** max(0, n))
 
 
+def acquire_file_lock(lock):
+    if os.name == "nt":
+        import msvcrt
+        lock.seek(0, os.SEEK_END)
+        if lock.tell() == 0:
+            lock.write("0")
+            lock.flush()
+        lock.seek(0)
+        msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
 def transfer_options(config):
-    return {"concurrent_fragment_downloads": max(1, min(16, int(config.get("fragments", 4)))),
-            "ratelimit": None, "retries": 3, "fragment_retries": 3, "extractor_retries": 3,
-            "retry_sleep_functions": {key: retry_delay for key in ("http", "fragment", "extractor")}}
+    connections = max(1, min(16, int(config.get("fragments", 8))))
+    options = {"concurrent_fragment_downloads": connections,
+               "ratelimit": None, "retries": 3, "fragment_retries": 3, "extractor_retries": 3,
+               "retry_sleep_functions": {key: retry_delay for key in ("http", "fragment", "extractor")}}
+    # A direct file is a single HTTP request unless an external range downloader is available.
+    # aria2c can split it only when the source server supports byte-range requests.
+    if config.get("direct") and shutil.which("aria2c"):
+        options["external_downloader"] = {"http": "aria2c"}
+        options["external_downloader_args"] = {"aria2c": [
+            "-c", f"-x{connections}", f"-s{connections}", "-k1M", "--file-allocation=none"]}
+    return options
 
 
 def check_space(folder, required=0):
@@ -134,8 +155,12 @@ def run(config):
     work.mkdir(parents=True, exist_ok=True)
     lock = (work / "lock").open("a")
     try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
+        acquire_file_lock(lock)
+    except OSError as error:
+        if error.errno not in (None, errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+            lock.close()
+            raise
+        lock.close()
         raise ValueError("This download is already running in another window.")
     previous = work / ("media." + container)
     if previous.exists():
@@ -218,7 +243,8 @@ def run(config):
 
 def main():
     # FFmpeg and ffprobe inherit this process group, allowing cancellation of all work.
-    os.setsid()
+    if os.name != "nt":
+        os.setsid()
     try:
         run(json.loads(sys.stdin.readline()))
     except Exception as error:

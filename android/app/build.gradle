@@ -1,0 +1,32 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.miraj.freevideodownloader'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.miraj.freevideodownloader'
+        minSdk 26
+        targetSdk 35
+        versionCode 6
+        versionName '0.6.0'
+        // This APK is for Android phones. The embedded Python runtime ships a
+        // separate native interpreter per ABI, so omit emulator-only x86_64.
+        ndk {
+            if (project.hasProperty('includeEmulatorAbi')) {
+                abiFilters 'arm64-v8a', 'x86_64'
+            } else {
+                abiFilters 'arm64-v8a'
+            }
+        }
+    }
+}
+
+dependencies {
+    implementation 'dev.ffmpegkit-maintained:yt-dlp-android:2.0.2'
+    // Use FFmpeg's stream-copy muxer instead of Android MediaMuxer so source
+    // codecs and container metadata are preserved without re-encoding.
+    implementation 'dev.ffmpegkit-maintained:ffmpeg-kit-audio:8.1.9'
+}

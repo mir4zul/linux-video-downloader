@@ -1,1 +1,1 @@
-"""Free Video Downloader desktop application."""
+"""Download video and audio application."""

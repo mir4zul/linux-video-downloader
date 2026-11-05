@@ -73,6 +73,20 @@ class FormatTests(unittest.TestCase):
             with self.subTest(info=info), self.assertRaises(ValueError):
                 build_choices(info)
 
+    def test_direct_mkv_without_codec_metadata_keeps_original_and_audio_choices(self):
+        url = ("http://172.16.50.14/media/Moana%20%5BDual%20Audio%5D.mkv")
+        info = {"title": "Moana [Dual Audio]", "formats": [{
+            "format_id": "http-1", "url": url, "ext": "mkv",
+            "vcodec": "unknown", "acodec": "unknown",
+        }]}
+        videos, audios = build_choices(info, url)
+        self.assertEqual(len(videos), 1)
+        self.assertEqual(videos[0].container, "mkv")
+        self.assertEqual(videos[0].selector, "http-1")
+        self.assertTrue(videos[0].direct)
+        self.assertEqual([choice.bitrate for choice in audios], [128, 192, 256, 320])
+        self.assertTrue(all(choice.container == "mp3" for choice in audios))
+
     def test_engine_uses_safe_metadata_only_arguments(self):
         args = analysis_arguments("https://example.com/a?x=1&y=2")
         self.assertIn("--skip-download", args)

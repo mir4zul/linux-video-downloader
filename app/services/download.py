@@ -2,6 +2,7 @@ import json
 import os
 import signal
 import sys
+import subprocess
 
 from PySide6.QtCore import QObject, QProcess, Signal
 
@@ -14,8 +15,13 @@ class DownloadJob(QObject):
         super().__init__(parent)
         self.config = config
         self.process = QProcess(self)
-        self.process.setProgram(sys.executable)
-        self.process.setArguments(["-m", "app.services.download_worker"])
+        if getattr(sys, "frozen", False):
+            worker = os.path.join(os.path.dirname(sys.executable), "worker", "DownloaderWorker.exe")
+            self.process.setProgram(worker)
+            self.process.setArguments(["--fvd-download-worker"])
+        else:
+            self.process.setProgram(sys.executable)
+            self.process.setArguments(["-m", "app.services.download_worker"])
         self.process.started.connect(self.send_config)
         self.process.readyReadStandardOutput.connect(self.read_output)
         self.process.readyReadStandardError.connect(self.read_errors)
@@ -63,10 +69,19 @@ class DownloadJob(QObject):
         self.cancelled = True
         pid = self.process.processId()
         if pid:
-            try:
-                os.killpg(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                self.process.kill()  # Worker may not have created its session yet.
+            if os.name == "nt":
+                try:
+                    subprocess.Popen(["taskkill", "/F", "/T", "/PID", str(pid)],
+                                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL,
+                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                except OSError:
+                    self.process.kill()
+            else:
+                try:
+                    os.killpg(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    self.process.kill()  # Worker may not have created its session yet.
 
     def process_error(self, error):
         if error == QProcess.ProcessError.FailedToStart:

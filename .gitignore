@@ -8,3 +8,5 @@ dist/
 .ruff_cache/
 *.sqlite3
 *.sqlite3-*
+android/local.properties
+android/*.apk

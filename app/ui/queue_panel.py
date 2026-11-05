@@ -3,7 +3,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QBrush, QColor, QDesktopServices
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QProgressBar, QPushButton, QSpinBox,
+    QFrame, QHBoxLayout, QHeaderView, QLabel, QProgressBar, QPushButton, QSpinBox,
     QMessageBox, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -50,6 +50,7 @@ class QueuePanel(QWidget):
         self.progress_cells = {}
         self.action_cells = {}
         self.current_view = "active"
+        self.view_touched = False
         self.setStyleSheet(PANEL_STYLE)
 
         layout = QVBoxLayout(self)
@@ -98,11 +99,12 @@ class QueuePanel(QWidget):
         settings_heading.setObjectName("settingsHeading")
         settings.addWidget(settings_heading)
         settings.addSpacing(6)
-        settings.addWidget(QLabel("Parallel fragments"))
+        settings.addWidget(QLabel("Parallel connections"))
         self.fragments = QSpinBox()
         self.fragments.setRange(1, 16)
-        self.fragments.setValue(int(store.setting("fragments", 4)))
-        self.fragments.setToolTip("For supported fragmented streams. Applies to new downloads.")
+        self.fragments.setValue(int(store.setting("fragments", 8)))
+        self.fragments.setToolTip(
+            "Up to this many media fragments, or direct-file HTTP ranges when aria2c and server range support are available.")
         settings.addWidget(self.fragments)
         settings.addSpacing(5)
         settings.addWidget(QLabel("Simultaneous downloads"))
@@ -118,15 +120,18 @@ class QueuePanel(QWidget):
         view_row = QHBoxLayout()
         view_row.setSpacing(8)
         self.active_view = QPushButton("In progress · 0")
-        self.history_view = QPushButton("History · 0")
-        for button in (self.active_view, self.history_view):
+        self.attention_view = QPushButton("Paused / issues · 0")
+        self.history_view = QPushButton("Completed · 0")
+        for button in (self.active_view, self.attention_view, self.history_view):
             button.setObjectName("viewButton")
             button.setCheckable(True)
-            button.setMinimumWidth(150)
+            button.setMinimumWidth(132)
         self.active_view.setChecked(True)
         self.active_view.clicked.connect(lambda: self.set_view("active"))
+        self.attention_view.clicked.connect(lambda: self.set_view("attention"))
         self.history_view.clicked.connect(lambda: self.set_view("history"))
         view_row.addWidget(self.active_view)
+        view_row.addWidget(self.attention_view)
         view_row.addWidget(self.history_view)
         view_row.addStretch(1)
         self.pause_all_button = QPushButton("Pause all")
@@ -147,12 +152,17 @@ class QueuePanel(QWidget):
         self.tree.setAlternatingRowColors(True)
         self.tree.setUniformRowHeights(False)
         self.tree.setMinimumHeight(210)
-        self.tree.setColumnWidth(0, 230)
-        self.tree.setColumnWidth(1, 95)
-        self.tree.setColumnWidth(2, 300)
-        self.tree.setColumnWidth(3, 220)
-        self.tree.header().setStretchLastSection(True)
-        layout.addWidget(self.tree, 1)
+        self.tree.setColumnWidth(0, 430)
+        self.tree.setColumnWidth(1, 105)
+        self.tree.setColumnWidth(2, 500)
+        self.tree.setColumnWidth(3, 250)
+        header = self.tree.header()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        layout.addWidget(self.tree)
 
         self.empty_card = QFrame()
         self.empty_card.setObjectName("emptyCard")
@@ -171,7 +181,11 @@ class QueuePanel(QWidget):
         empty_layout.addWidget(icon)
         empty_layout.addWidget(self.empty_title)
         empty_layout.addWidget(self.empty_description)
-        layout.addWidget(self.empty_card, 1)
+        self.empty_card.setMinimumHeight(150)
+        self.empty_card.setMaximumHeight(210)
+        layout.addWidget(self.empty_card)
+        self.spacer_index = layout.count()
+        layout.addStretch(1)
 
         actions = QHBoxLayout()
         actions.addStretch(1)
@@ -201,7 +215,9 @@ class QueuePanel(QWidget):
 
     def set_view(self, view):
         self.current_view = view
+        self.view_touched = True
         self.active_view.setChecked(view == "active")
+        self.attention_view.setChecked(view == "attention")
         self.history_view.setChecked(view == "history")
         self.tree.clearSelection()
         self.refresh()
@@ -225,6 +241,15 @@ class QueuePanel(QWidget):
     def is_active(task):
         return task["state"] in ("queued", "running")
 
+    @staticmethod
+    def is_in_view(task, view):
+        state = task.get("state", "failed")
+        if view == "active":
+            return state in ("queued", "running")
+        if view == "attention":
+            return state in ("paused", "failed", "cancelled", "interrupted")
+        return state == "completed"
+
     def refresh(self):
         active_count = sum(task["state"] == "running" for task in self.queue.tasks)
         queued_count = sum(task["state"] == "queued" for task in self.queue.tasks)
@@ -236,9 +261,19 @@ class QueuePanel(QWidget):
         self.stat_labels["completed"].setText(str(completed_count))
         self.stat_labels["attention"].setText(str(attention_count))
         active_view_count = active_count + queued_count
-        history_count = completed_count + attention_count
+        if not self.view_touched:
+            if active_view_count:
+                self.current_view = "active"
+            elif attention_count:
+                self.current_view = "attention"
+            elif completed_count:
+                self.current_view = "history"
         self.active_view.setText(f"In progress · {active_view_count}")
-        self.history_view.setText(f"History · {history_count}")
+        self.attention_view.setText(f"Paused / issues · {attention_count}")
+        self.history_view.setText(f"Completed · {completed_count}")
+        self.active_view.setChecked(self.current_view == "active")
+        self.attention_view.setChecked(self.current_view == "attention")
+        self.history_view.setChecked(self.current_view == "history")
 
         for task in self.queue.tasks:
             row = self.rows.get(task["id"])
@@ -260,14 +295,14 @@ class QueuePanel(QWidget):
             detail, percent, indeterminate = self.progress_details(task, state)
             self.update_progress_cell(task, state, detail, percent, indeterminate)
             row.setText(2, detail)
-            row.setToolTip(0, config.get("url", ""))
+            row.setToolTip(0, f"{title}\n{quality}\n{config.get('url', '')}")
             row.setToolTip(2, task.get("path") or detail)
             row.setForeground(1, QBrush(QColor({
                 "running": "#6ee7c0", "queued": "#f5c76b", "completed": "#6ee7c0",
                 "failed": "#ff8a8a", "cancelled": "#a7b6ce", "interrupted": "#f5c76b",
                 "paused": "#f5c76b",
             }.get(state, "#e7edf7"))))
-            row.setHidden(self.is_active(task) != (self.current_view == "active"))
+            row.setHidden(not self.is_in_view(task, self.current_view))
             _, controls = self.action_cells[task["id"]]
             active = self.is_active(task)
             resumable = state in ("paused", "failed", "cancelled", "interrupted")
@@ -281,12 +316,19 @@ class QueuePanel(QWidget):
                 if active else "Remove this entry from history (keeps downloaded files)")
 
         self.remove_stale_rows()
-        shown = active_view_count if self.current_view == "active" else history_count
+        shown = {"active": active_view_count, "attention": attention_count,
+                 "history": completed_count}[self.current_view]
         self.tree.setVisible(shown > 0)
         self.empty_card.setVisible(shown == 0)
+        layout = self.layout()
+        layout.setStretch(layout.indexOf(self.tree), 1 if shown else 0)
+        layout.setStretch(self.spacer_index, 0 if shown else 1)
         if shown == 0 and self.current_view == "history":
             self.empty_title.setText("Your history is clear")
-            self.empty_description.setText("Finished and interrupted downloads will be saved here.")
+            self.empty_description.setText("Finished downloads will appear here.")
+        elif shown == 0 and self.current_view == "attention":
+            self.empty_title.setText("Nothing paused or needs attention")
+            self.empty_description.setText("Paused, failed, cancelled and interrupted downloads appear here.")
         else:
             self.empty_title.setText("Nothing downloading right now")
             self.empty_description.setText("New downloads will appear here with their live progress.")
@@ -316,7 +358,7 @@ class QueuePanel(QWidget):
         for key, title in (("pause", "Pause"), ("resume", "Resume"),
                            ("cancel", "Cancel"), ("delete", "Delete")):
             button = QPushButton(title, cell)
-            button.setFixedWidth({"pause": 48, "resume": 50, "cancel": 48, "delete": 45}[key])
+            button.setFixedSize({"pause": 56, "resume": 58, "cancel": 52, "delete": 48}[key], 28)
             button.setToolTip({
                 "pause": "Pause this download and keep its resumable data",
                 "resume": "Resume this download",
@@ -329,6 +371,7 @@ class QueuePanel(QWidget):
                                    self.row_action(task_id, action))
             buttons.addWidget(button)
             controls[key] = button
+        buttons.addStretch(1)
         self.tree.setItemWidget(self.rows[task["id"]], 3, cell)
         return cell, controls
 
@@ -347,14 +390,8 @@ class QueuePanel(QWidget):
             except ValueError as error:
                 self.message.setText(str(error))
         elif action == "delete":
-            answer = QMessageBox.question(
-                self, "Delete history item?",
-                "Remove this entry from history? Any downloaded file will stay on disk.",
-                QMessageBox.StandardButton.Delete | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Cancel,
-            )
-            if answer == QMessageBox.StandardButton.Delete:
-                self.queue.delete_history(task)
+            if self.queue.delete_history(task):
+                self.message.setText("History entry deleted. Any downloaded file was kept.")
 
     def remove_stale_rows(self):
         current_ids = {task["id"] for task in self.queue.tasks}
