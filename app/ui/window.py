@@ -4,7 +4,7 @@ import os
 from PySide6.QtCore import Qt, QStandardPaths, QUrl, QUrlQuery
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
+    QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
     QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPushButton,
     QScrollArea, QTextBrowser, QVBoxLayout, QWidget, QTabWidget,
 )
@@ -62,7 +62,14 @@ class MainWindow(QMainWindow):
         self.thumbnail = ThumbnailLoader(self)
         self.thumbnail.loaded.connect(self.show_thumbnail)
         self.setWindowTitle("Downloader")
-        self.resize(900, 820)
+        screen = QApplication.primaryScreen()
+        available = screen.availableGeometry() if screen else None
+        width = min(1100, available.width() - 80) if available else 1100
+        height = min(850, available.height() - 80) if available else 850
+        self.setWindowState(Qt.WindowState.WindowNoState)
+        self.resize(max(620, width), max(540, height))
+        if available:
+            self.move(available.center() - self.rect().center())
         self.setMinimumSize(620, 540)
         self.setStyleSheet(STYLE)
         scroll = QScrollArea()
@@ -84,6 +91,10 @@ class MainWindow(QMainWindow):
         self.url = QLineEdit()
         self.url.setPlaceholderText("Paste a YouTube or supported video link")
         self.url.setAccessibleName("Video link")
+        self.clear_url = QPushButton("Clear")
+        self.clear_url.setToolTip("Clear the video link and reset the analysis")
+        self.clear_url.setEnabled(False)
+        self.clear_url.clicked.connect(self.url.clear)
         self.analyze = QPushButton("Analyze")
         self.analyze.setEnabled(False)
         self.analyze.setToolTip("Read available formats without downloading the video.")
@@ -94,6 +105,7 @@ class MainWindow(QMainWindow):
         self.cancel_analysis.setVisible(False)
         self.cancel_analysis.clicked.connect(lambda: self.job.cancel() if self.job else None)
         link_row.addWidget(self.url, 1)
+        link_row.addWidget(self.clear_url)
         link_row.addWidget(self.analyze)
         link_row.addWidget(self.cancel_analysis)
         layout.addLayout(link_row)
@@ -223,6 +235,7 @@ class MainWindow(QMainWindow):
         self.metadata.setText("Analyze the link to view title, duration and available formats.")
         self.update_mode()
         self.analyze.setEnabled(bool(self.url.text().strip()) and self.job is None)
+        self.clear_url.setEnabled(bool(self.url.text().strip()) and self.url.isEnabled())
         self.status.setText("Ready to analyze.")
 
     def start_analysis(self):
@@ -239,6 +252,7 @@ class MainWindow(QMainWindow):
         self.job.failed.connect(self.status.setText)
         self.job.finished.connect(self.analysis_finished)
         self.url.setEnabled(False)
+        self.clear_url.setEnabled(False)
         self.analyze.setEnabled(False)
         self.cancel_analysis.setVisible(True)
         self.status.setText("Analyzing link… Reading title and available formats.")
@@ -266,6 +280,7 @@ class MainWindow(QMainWindow):
         job, self.job = self.job, None
         job.deleteLater()
         self.url.setEnabled(True)
+        self.clear_url.setEnabled(bool(self.url.text().strip()))
         self.analyze.setEnabled(bool(self.url.text().strip()))
         self.cancel_analysis.setVisible(False)
         self.selection_changed()
