@@ -67,10 +67,10 @@ class MainWindow(QMainWindow):
         width = min(1100, available.width() - 80) if available else 1100
         height = min(850, available.height() - 80) if available else 850
         self.setWindowState(Qt.WindowState.WindowNoState)
-        self.resize(max(620, width), max(540, height))
+        width, height = max(620, width), max(540, height)
+        self.setFixedSize(width, height)
         if available:
             self.move(available.center() - self.rect().center())
-        self.setMinimumSize(620, 540)
         self.setStyleSheet(STYLE)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)

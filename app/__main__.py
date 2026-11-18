@@ -32,6 +32,7 @@ def main():
     icon_path = Path(__file__).parent / "assets" / "download.png"
     application.setWindowIcon(QIcon(str(icon_path)))
     window = MainWindow()
+    window.showNormal()
     window.show()
     for incoming_url in incoming_urls:
         if window.open_external_url(incoming_url):
