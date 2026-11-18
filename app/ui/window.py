@@ -65,7 +65,7 @@ class MainWindow(QMainWindow):
         screen = QApplication.primaryScreen()
         available = screen.availableGeometry() if screen else None
         width = min(1100, available.width() - 80) if available else 1100
-        height = min(850, available.height() - 80) if available else 850
+        height = min(900, available.height() - 80) if available else 900
         self.setWindowState(Qt.WindowState.WindowNoState)
         width, height = max(620, width), max(540, height)
         self.setFixedSize(width, height)
@@ -80,8 +80,8 @@ class MainWindow(QMainWindow):
         body = QWidget()
         scroll.setWidget(body)
         layout = QVBoxLayout(body)
-        layout.setContentsMargins(28, 24, 28, 24)
-        layout.setSpacing(18)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(12)
         title = label("Downloader")
         title.setObjectName("title")
         layout.addWidget(title)
@@ -113,10 +113,10 @@ class MainWindow(QMainWindow):
         preview = QFrame()
         preview.setObjectName("card")
         preview_layout = QVBoxLayout(preview)
-        preview_layout.setContentsMargins(24, 24, 24, 24)
+        preview_layout.setContentsMargins(18, 14, 18, 14)
         self.preview = label("Video preview")
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview.setMinimumHeight(95)
+        self.preview.setMinimumHeight(70)
         preview_layout.addWidget(self.preview)
         self.metadata = label("Title, thumbnail and available formats will appear here after analysis.", True)
         preview_layout.addWidget(self.metadata)
