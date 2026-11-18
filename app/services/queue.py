@@ -10,6 +10,7 @@ class DownloadQueue(QObject):
     changed = Signal()
     idle = Signal()
     storage_error = Signal(str)
+    notification = Signal(str, str, bool)
 
     def __init__(self, store, limit=2, factory=DownloadJob, parent=None):
         super().__init__(parent)
@@ -77,6 +78,12 @@ class DownloadQueue(QObject):
             if kind == "completed":
                 task["path"] = event["path"]
                 task["completed"] = datetime.now(timezone.utc).isoformat()
+                title = task.get("config", {}).get("title") or "Your download"
+                self.notification.emit("Download complete", f"{title} is ready.", False)
+            elif kind == "failed":
+                title = task.get("config", {}).get("title") or "Download"
+                detail = " ".join(str(event.get("message", "Network or source error.")).split())
+                self.notification.emit("Download failed", f"{title}: {detail[:220]}", True)
             self.persist(task)
         elif event.get("message"):
             task["message"] = event["message"]
@@ -88,6 +95,8 @@ class DownloadQueue(QObject):
         if task["state"] == "running":
             task.update(state="failed", message="Worker stopped without a verified output.")
             self.persist(task)
+            title = task.get("config", {}).get("title") or "Download"
+            self.notification.emit("Download failed", f"{title}: worker stopped unexpectedly.", True)
         self.changed.emit()
         if not self.active:
             self.idle.emit()

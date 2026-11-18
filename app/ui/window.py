@@ -15,6 +15,7 @@ from app.services.formats import build_choices, duration_text, validate_url
 from app.services.thumbnail import ThumbnailLoader
 from app.services.store import Store
 from app.services.queue import DownloadQueue
+from app.services.notifications import DesktopNotifier
 from app.ui.queue_panel import QueuePanel
 
 
@@ -53,6 +54,9 @@ class MainWindow(QMainWindow):
         self.store = store or Store()
         self.queue = DownloadQueue(self.store, self.store.setting("limit", 2), parent=self)
         self.queue.idle.connect(self.queue_idle)
+        icon_path = Path(__file__).parent.parent / "assets" / "download.png"
+        self.notifier = DesktopNotifier(self, icon_path)
+        self.queue.notification.connect(self.notifier.notify)
         self.job = None
         self.close_pending = False
         self.external_auto_download = False
