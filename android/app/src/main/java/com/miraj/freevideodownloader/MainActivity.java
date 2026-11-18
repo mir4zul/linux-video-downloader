@@ -1,6 +1,7 @@
 package com.miraj.freevideodownloader;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.DownloadManager;
 import android.content.Context;
 import android.content.Intent;
@@ -50,6 +51,11 @@ public class MainActivity extends Activity {
     private DownloadManager downloads;
     private EditText urlInput;
     private LinearLayout historyList;
+    private LinearLayout bulkActions;
+    private TextView selectionHint;
+    private Button pauseSelectedButton;
+    private Button retrySelectedButton;
+    private Button cancelSelectedButton;
     private TextView analysis;
     private TextView qualityHint;
     private Spinner qualitySpinner;
@@ -58,6 +64,7 @@ public class MainActivity extends Activity {
     private Button downloadButton;
     private ProgressBar taskProgress;
     private final ExecutorService extractor = Executors.newSingleThreadExecutor();
+    private final Set<String> selectedHistoryItems = new HashSet<>();
     private List<VideoExtractor.Choice> choices = new ArrayList<>();
     private String selectedMode = "video";
     private String analyzedUrl = "";
@@ -181,6 +188,25 @@ public class MainActivity extends Activity {
         historyTitle.setTextSize(19);
         historyTitle.setTypeface(null, 1);
         page.addView(historyTitle);
+        selectionHint = label("Long press downloads to select multiple.");
+        selectionHint.setTextSize(12);
+        selectionHint.setPadding(0, dp(4), 0, dp(4));
+        page.addView(selectionHint);
+        bulkActions = new LinearLayout(this);
+        bulkActions.setOrientation(LinearLayout.HORIZONTAL);
+        bulkActions.setVisibility(View.GONE);
+        LinearLayout.LayoutParams bulkParams = matchWrap();
+        bulkParams.bottomMargin = dp(6);
+        page.addView(bulkActions, bulkParams);
+        pauseSelectedButton = smallButton("Pause");
+        retrySelectedButton = smallButton("Retry");
+        cancelSelectedButton = smallButton("Cancel");
+        bulkActions.addView(pauseSelectedButton, new LinearLayout.LayoutParams(0, dp(42), 1));
+        bulkActions.addView(retrySelectedButton, new LinearLayout.LayoutParams(0, dp(42), 1));
+        bulkActions.addView(cancelSelectedButton, new LinearLayout.LayoutParams(0, dp(42), 1));
+        pauseSelectedButton.setOnClickListener(v -> pauseSelectedDownloads());
+        retrySelectedButton.setOnClickListener(v -> retrySelectedDownloads());
+        cancelSelectedButton.setOnClickListener(v -> confirmCancelSelectedDownloads());
         historyList = new LinearLayout(this);
         historyList.setOrientation(LinearLayout.VERTICAL);
         LinearLayout.LayoutParams listParams = matchWrap();
@@ -322,17 +348,7 @@ public class MainActivity extends Activity {
             return;
         }
         try {
-            DownloadManager.Request request = new DownloadManager.Request(uri);
-            request.setTitle(fileName(uri));
-            request.setDescription("Downloader · Saving to Downloads");
-            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-            request.setAllowedOverMetered(true);
-            request.setAllowedOverRoaming(false);
-            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName(uri));
-            long id = downloads.enqueue(request);
-            Set<String> ids = new HashSet<>(getPreferences(MODE_PRIVATE).getStringSet("download_ids", Collections.emptySet()));
-            ids.add(Long.toString(id));
-            getPreferences(MODE_PRIVATE).edit().putStringSet("download_ids", ids).apply();
+            enqueueManagedDownload(uri, fileName(uri), fileName(uri), null);
             analysis.setText("Download added to the Android download queue.");
             refreshHistoryIfNeeded();
             hideKeyboard();
@@ -402,30 +418,67 @@ public class MainActivity extends Activity {
         try {
             Uri mediaUri = validUri(choice.mediaUrl);
             if (mediaUri == null) throw new IllegalArgumentException("The source returned an invalid media URL.");
-            DownloadManager.Request request = new DownloadManager.Request(mediaUri);
-            request.setTitle(choice.title + " · " + choice.label);
-            request.setDescription("Downloader · Saving to Downloads");
-            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-            request.setAllowedOverMetered(true);
-            request.setAllowedOverRoaming(false);
-            if (choice.headers != null) {
-                java.util.Iterator<String> names = choice.headers.keys();
-                while (names.hasNext()) {
-                    String name = names.next();
-                    request.addRequestHeader(name, choice.headers.optString(name));
-                }
-            }
             String fileName = safeFileName(choice.title) + "-" + System.currentTimeMillis() + "." + choice.extension;
-            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
-            long id = downloads.enqueue(request);
-            Set<String> ids = new HashSet<>(getPreferences(MODE_PRIVATE).getStringSet("download_ids", Collections.emptySet()));
-            ids.add(Long.toString(id));
-            getPreferences(MODE_PRIVATE).edit().putStringSet("download_ids", ids).apply();
+            enqueueManagedDownload(mediaUri, choice.title + " · " + choice.label, fileName, choice.headers);
             analysis.setText("Download started · " + choice.label);
             refreshHistoryIfNeeded();
         } catch (RuntimeException e) {
             analysis.setText("Could not start this download. " + e.getMessage());
         }
+    }
+
+    private long enqueueManagedDownload(Uri uri, String title, String outputName, JSONObject headers) {
+        DownloadManager.Request request = new DownloadManager.Request(uri);
+        request.setTitle(title);
+        request.setDescription("Downloader · Saving to Downloads");
+        request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+        request.setAllowedOverMetered(true);
+        request.setAllowedOverRoaming(false);
+        JSONObject safeHeaders = headers == null ? new JSONObject() : headers;
+        java.util.Iterator<String> names = safeHeaders.keys();
+        while (names.hasNext()) {
+            String name = names.next();
+            request.addRequestHeader(name, safeHeaders.optString(name));
+        }
+        request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, outputName);
+        long id = downloads.enqueue(request);
+        Set<String> ids = new HashSet<>(getPreferences(MODE_PRIVATE).getStringSet("download_ids", Collections.emptySet()));
+        ids.add(Long.toString(id));
+        try {
+            JSONObject metadata = new JSONObject();
+            metadata.put("uri", uri.toString());
+            metadata.put("title", title);
+            metadata.put("file_name", outputName);
+            metadata.put("headers", safeHeaders);
+            JSONObject requests = downloadRequests();
+            requests.put(Long.toString(id), metadata);
+            getPreferences(MODE_PRIVATE).edit().putStringSet("download_ids", ids)
+                    .putString("download_requests", requests.toString()).apply();
+        } catch (Exception ignored) {
+            getPreferences(MODE_PRIVATE).edit().putStringSet("download_ids", ids).apply();
+        }
+        return id;
+    }
+
+    private JSONObject downloadRequests() {
+        try {
+            return new JSONObject(getPreferences(MODE_PRIVATE).getString("download_requests", "{}"));
+        } catch (Exception ignored) {
+            return new JSONObject();
+        }
+    }
+
+    private JSONObject pausedRequests() {
+        try {
+            return new JSONObject(getPreferences(MODE_PRIVATE).getString("paused_requests", "{}"));
+        } catch (Exception ignored) {
+            return new JSONObject();
+        }
+    }
+
+    private void saveRequestMaps(JSONObject requests, JSONObject paused) {
+        getPreferences(MODE_PRIVATE).edit().putString("download_requests", requests.toString())
+                .putString("paused_requests", paused.toString()).apply();
     }
 
     @Override protected void onDestroy() {
@@ -462,12 +515,69 @@ public class MainActivity extends Activity {
                 // A user may remove an item from Android's system download history.
             }
         }
+        JSONObject paused = pausedRequests();
+        java.util.Iterator<String> pausedIds = paused.keys();
+        while (pausedIds.hasNext()) {
+            String key = pausedIds.next();
+            JSONObject request = paused.optJSONObject(key);
+            if (request != null) addPausedCard(key, request);
+        }
         for (String item : getPreferences(MODE_PRIVATE).getStringSet("merged_downloads", Collections.emptySet())) {
             int split = item.indexOf('|');
             if (split > 0) addMergedHistoryCard(Uri.parse(item.substring(0, split)), item.substring(split + 1));
         }
         if (historyList.getChildCount() == 0) historyList.addView(label("No downloads yet."));
+        updateBulkActions();
         return activeDownload;
+    }
+
+    private void makeSelectable(LinearLayout card, String key) {
+        card.setBackground(roundRect(selectedHistoryItems.contains(key) ? Color.rgb(35, 67, 65) : PANEL, 12));
+        card.setOnLongClickListener(v -> {
+            if (selectedHistoryItems.contains(key)) selectedHistoryItems.remove(key);
+            else selectedHistoryItems.add(key);
+            renderHistory();
+            return true;
+        });
+    }
+
+    private void updateBulkActions() {
+        if (bulkActions == null) return;
+        boolean multiple = selectedHistoryItems.size() > 1;
+        bulkActions.setVisibility(multiple ? View.VISIBLE : View.GONE);
+        if (!multiple) {
+            selectionHint.setText("Long press downloads to select multiple.");
+            return;
+        }
+        selectionHint.setText(selectedHistoryItems.size() + " selected · long press to deselect");
+        boolean active = false;
+        boolean retryable = false;
+        for (String key : selectedHistoryItems) {
+            if (key.startsWith("dm:")) {
+                int status = downloadStatus(parseId(key.substring(3)));
+                active |= status == DownloadManager.STATUS_PENDING || status == DownloadManager.STATUS_RUNNING;
+                retryable |= status == DownloadManager.STATUS_PAUSED || status == DownloadManager.STATUS_FAILED;
+            } else if (key.startsWith("paused:")) {
+                retryable = true;
+            }
+        }
+        pauseSelectedButton.setEnabled(active);
+        retrySelectedButton.setEnabled(retryable);
+        cancelSelectedButton.setEnabled(active || retryable);
+    }
+
+    private long parseId(String value) {
+        try { return Long.parseLong(value); } catch (NumberFormatException ignored) { return -1; }
+    }
+
+    private int downloadStatus(long id) {
+        if (id < 0) return -1;
+        try (Cursor cursor = downloads.query(new DownloadManager.Query().setFilterById(id))) {
+            if (cursor != null && cursor.moveToFirst()) {
+                return cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+            }
+        } catch (RuntimeException ignored) { }
+        return -1;
     }
 
     private void addMergedHistoryCard(Uri uri, String name) {
@@ -478,6 +588,7 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams cardParams = matchWrap();
         cardParams.bottomMargin = dp(10);
         historyList.addView(card, cardParams);
+        makeSelectable(card, "merged:" + uri);
         TextView title = label(name);
         title.setTextColor(TEXT);
         title.setTypeface(null, 1);
@@ -518,6 +629,7 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams cardParams = matchWrap();
         cardParams.bottomMargin = dp(10);
         historyList.addView(card, cardParams);
+        makeSelectable(card, "dm:" + id);
 
         TextView title = label(name == null || name.isEmpty() ? "Download" : name);
         title.setTextColor(TEXT);
@@ -553,17 +665,192 @@ public class MainActivity extends Activity {
             });
             actions.addView(open);
         }
-        Button cancel = smallButton(status == DownloadManager.STATUS_RUNNING || status == DownloadManager.STATUS_PENDING ? "Cancel" : "Remove");
-        cancel.setOnClickListener(v -> {
-            if (status == DownloadManager.STATUS_RUNNING || status == DownloadManager.STATUS_PENDING || status == DownloadManager.STATUS_PAUSED) {
-                downloads.remove(id);
-            }
-            Set<String> ids = new HashSet<>(getPreferences(MODE_PRIVATE).getStringSet("download_ids", Collections.emptySet()));
-            ids.remove(Long.toString(id));
-            getPreferences(MODE_PRIVATE).edit().putStringSet("download_ids", ids).apply();
+        boolean active = status == DownloadManager.STATUS_RUNNING || status == DownloadManager.STATUS_PENDING;
+        boolean retryable = status == DownloadManager.STATUS_PAUSED || status == DownloadManager.STATUS_FAILED;
+        if (active || retryable) {
+            Button toggle = smallButton(active ? "Pause" : "Retry");
+            toggle.setOnClickListener(v -> {
+                if (active) pauseManagedDownload(id);
+                else retryManagedDownload(id);
+            });
+            actions.addView(toggle);
+        }
+        Button remove = smallButton(active || status == DownloadManager.STATUS_PAUSED ? "Cancel" : "Remove");
+        remove.setOnClickListener(v -> removeManagedDownload(id, active || status == DownloadManager.STATUS_PAUSED));
+        actions.addView(remove);
+    }
+
+    private JSONObject metadataForDownload(long id) {
+        JSONObject stored = downloadRequests().optJSONObject(Long.toString(id));
+        if (stored != null) return stored;
+        try (Cursor cursor = downloads.query(new DownloadManager.Query().setFilterById(id))) {
+            if (cursor == null || !cursor.moveToFirst()) return null;
+            String source = cursor.getString(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_URI));
+            String title = cursor.getString(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TITLE));
+            Uri uri = Uri.parse(source);
+            String name = fileName(uri);
+            if (name == null || name.trim().isEmpty()) name = safeFileName(title) + ".mp4";
+            JSONObject fallback = new JSONObject();
+            fallback.put("uri", source);
+            fallback.put("title", title == null ? "Download" : title);
+            fallback.put("file_name", name);
+            fallback.put("headers", new JSONObject());
+            return fallback;
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private void pauseManagedDownload(long id) {
+        int status = downloadStatus(id);
+        if (status != DownloadManager.STATUS_RUNNING && status != DownloadManager.STATUS_PENDING) return;
+        JSONObject metadata = metadataForDownload(id);
+        if (metadata == null) {
+            Toast.makeText(this, "Could not save this download for retry.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        int removed = downloads.remove(id);
+        if (removed == 0) {
             renderHistory();
-        });
-        actions.addView(cancel);
+            return;
+        }
+        JSONObject paused = pausedRequests();
+        try { paused.put(Long.toString(id), metadata); } catch (Exception ignored) { }
+        JSONObject requests = downloadRequests();
+        requests.remove(Long.toString(id));
+        Set<String> ids = new HashSet<>(getPreferences(MODE_PRIVATE).getStringSet("download_ids", Collections.emptySet()));
+        ids.remove(Long.toString(id));
+        selectedHistoryItems.remove("dm:" + id);
+        selectedHistoryItems.add("paused:" + id);
+        getPreferences(MODE_PRIVATE).edit().putStringSet("download_ids", ids).apply();
+        saveRequestMaps(requests, paused);
+        analysis.setText("Paused. Tap Retry to start this download again.");
+        renderHistory();
+    }
+
+    private void retryManagedDownload(long id) {
+        int status = downloadStatus(id);
+        if (status != DownloadManager.STATUS_PAUSED && status != DownloadManager.STATUS_FAILED) return;
+        JSONObject metadata = metadataForDownload(id);
+        if (metadata == null) return;
+        String selectionKey = "dm:" + id;
+        downloads.remove(id);
+        Set<String> ids = new HashSet<>(getPreferences(MODE_PRIVATE).getStringSet("download_ids", Collections.emptySet()));
+        ids.remove(Long.toString(id));
+        JSONObject requests = downloadRequests();
+        requests.remove(Long.toString(id));
+        getPreferences(MODE_PRIVATE).edit().putStringSet("download_ids", ids).apply();
+        saveRequestMaps(requests, pausedRequests());
+        long nextId = enqueueMetadata(metadata);
+        if (nextId >= 0 && selectedHistoryItems.remove(selectionKey)) selectedHistoryItems.add("dm:" + nextId);
+        analysis.setText("Retry started. Android restarts this transfer from the beginning.");
+        renderHistory();
+    }
+
+    private long enqueueMetadata(JSONObject metadata) {
+        Uri uri = validUri(metadata.optString("uri", ""));
+        if (uri == null) return -1;
+        String title = metadata.optString("title", "Download");
+        String name = metadata.optString("file_name", fileName(uri));
+        return enqueueManagedDownload(uri, title, name, metadata.optJSONObject("headers"));
+    }
+
+    private void retryPausedDownload(String key) {
+        JSONObject paused = pausedRequests();
+        JSONObject metadata = paused.optJSONObject(key);
+        if (metadata == null) return;
+        long nextId = enqueueMetadata(metadata);
+        if (nextId < 0) return;
+        paused.remove(key);
+        boolean wasSelected = selectedHistoryItems.remove("paused:" + key);
+        if (wasSelected) selectedHistoryItems.add("dm:" + nextId);
+        saveRequestMaps(downloadRequests(), paused);
+        analysis.setText("Retry started. Android restarts this transfer from the beginning.");
+        renderHistory();
+    }
+
+    private void removeManagedDownload(long id, boolean stop) {
+        if (stop) downloads.remove(id);
+        Set<String> ids = new HashSet<>(getPreferences(MODE_PRIVATE).getStringSet("download_ids", Collections.emptySet()));
+        ids.remove(Long.toString(id));
+        JSONObject requests = downloadRequests();
+        requests.remove(Long.toString(id));
+        selectedHistoryItems.remove("dm:" + id);
+        getPreferences(MODE_PRIVATE).edit().putStringSet("download_ids", ids).apply();
+        saveRequestMaps(requests, pausedRequests());
+        renderHistory();
+    }
+
+    private void addPausedCard(String key, JSONObject metadata) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(14), dp(12), dp(14), dp(12));
+        card.setBackground(roundRect(PANEL, 12));
+        LinearLayout.LayoutParams cardParams = matchWrap();
+        cardParams.bottomMargin = dp(10);
+        historyList.addView(card, cardParams);
+        makeSelectable(card, "paused:" + key);
+        TextView title = label(metadata.optString("title", "Download"));
+        title.setTextColor(TEXT);
+        title.setTypeface(null, 1);
+        title.setMaxLines(2);
+        title.setEllipsize(TextUtils.TruncateAt.END);
+        card.addView(title);
+        card.addView(label("Paused · retry starts from the beginning"));
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.END);
+        card.addView(actions);
+        Button retry = smallButton("Retry");
+        retry.setOnClickListener(v -> retryPausedDownload(key));
+        actions.addView(retry);
+        Button remove = smallButton("Remove");
+        remove.setOnClickListener(v -> removePausedDownload(key));
+        actions.addView(remove);
+    }
+
+    private void removePausedDownload(String key) {
+        JSONObject paused = pausedRequests();
+        paused.remove(key);
+        selectedHistoryItems.remove("paused:" + key);
+        saveRequestMaps(downloadRequests(), paused);
+        renderHistory();
+    }
+
+    private void pauseSelectedDownloads() {
+        for (String key : new HashSet<>(selectedHistoryItems)) {
+            if (key.startsWith("dm:")) pauseManagedDownload(parseId(key.substring(3)));
+        }
+    }
+
+    private void retrySelectedDownloads() {
+        for (String key : new HashSet<>(selectedHistoryItems)) {
+            if (key.startsWith("paused:")) retryPausedDownload(key.substring(7));
+            else if (key.startsWith("dm:")) retryManagedDownload(parseId(key.substring(3)));
+        }
+    }
+
+    private void confirmCancelSelectedDownloads() {
+        ArrayList<String> cancellable = new ArrayList<>();
+        for (String key : selectedHistoryItems) {
+            if (key.startsWith("paused:")) cancellable.add(key);
+            else if (key.startsWith("dm:")) {
+                int status = downloadStatus(parseId(key.substring(3)));
+                if (status == DownloadManager.STATUS_RUNNING || status == DownloadManager.STATUS_PENDING
+                        || status == DownloadManager.STATUS_PAUSED || status == DownloadManager.STATUS_FAILED) {
+                    cancellable.add(key);
+                }
+            }
+        }
+        if (cancellable.isEmpty()) return;
+        new AlertDialog.Builder(this).setTitle("Cancel selected downloads?")
+                .setMessage("Cancel " + cancellable.size() + " selected download(s)?")
+                .setNegativeButton("Keep", (dialog, which) -> dialog.dismiss())
+                .setPositiveButton("Cancel downloads", (dialog, which) -> {
+                    for (String key : cancellable) {
+                        if (key.startsWith("paused:")) removePausedDownload(key.substring(7));
+                        else removeManagedDownload(parseId(key.substring(3)), true);
+                    }
+                }).show();
     }
 
     private String statusText(int status, long total, long soFar) {

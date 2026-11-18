@@ -3,7 +3,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QBrush, QColor, QDesktopServices
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QHeaderView, QLabel, QProgressBar, QPushButton, QSpinBox,
+    QAbstractItemView, QFrame, QHBoxLayout, QHeaderView, QLabel, QProgressBar, QPushButton, QSpinBox,
     QMessageBox, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -134,16 +134,22 @@ class QueuePanel(QWidget):
         view_row.addWidget(self.attention_view)
         view_row.addWidget(self.history_view)
         view_row.addStretch(1)
-        self.pause_all_button = QPushButton("Pause all")
-        self.resume_all_button = QPushButton("Resume / retry all")
-        self.cancel_all_button = QPushButton("Cancel all")
+        self.pause_all_button = QPushButton("Pause selected")
+        self.resume_all_button = QPushButton("Resume / retry selected")
+        self.cancel_all_button = QPushButton("Cancel selected")
         self.clear_history_button = QPushButton("Delete history")
         self.clear_history_button.setObjectName("dangerButton")
-        view_row.addWidget(self.pause_all_button)
-        view_row.addWidget(self.resume_all_button)
-        view_row.addWidget(self.cancel_all_button)
         view_row.addWidget(self.clear_history_button)
         layout.addLayout(view_row)
+
+        self.bulk_toolbar = QWidget()
+        bulk_row = QHBoxLayout(self.bulk_toolbar)
+        bulk_row.setContentsMargins(0, 0, 0, 0)
+        bulk_row.addStretch(1)
+        for button in (self.pause_all_button, self.resume_all_button, self.cancel_all_button):
+            bulk_row.addWidget(button)
+        self.bulk_toolbar.setVisible(False)
+        layout.addWidget(self.bulk_toolbar)
 
         self.tree = QTreeWidget()
         self.tree.setObjectName("downloadList")
@@ -151,11 +157,12 @@ class QueuePanel(QWidget):
         self.tree.setRootIsDecorated(False)
         self.tree.setAlternatingRowColors(True)
         self.tree.setUniformRowHeights(False)
+        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.setMinimumHeight(210)
         self.tree.setColumnWidth(0, 430)
         self.tree.setColumnWidth(1, 105)
         self.tree.setColumnWidth(2, 500)
-        self.tree.setColumnWidth(3, 250)
+        self.tree.setColumnWidth(3, 200)
         header = self.tree.header()
         header.setStretchLastSection(False)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
@@ -202,9 +209,9 @@ class QueuePanel(QWidget):
         self.message.setWordWrap(True)
         layout.addWidget(self.message)
 
-        self.pause_all_button.clicked.connect(self.queue.pause_all)
-        self.resume_all_button.clicked.connect(self.queue.resume_all)
-        self.cancel_all_button.clicked.connect(self.cancel_all_confirmed)
+        self.pause_all_button.clicked.connect(self.pause_selected)
+        self.resume_all_button.clicked.connect(self.resume_selected)
+        self.cancel_all_button.clicked.connect(self.cancel_selected_confirmed)
         self.clear_history_button.clicked.connect(self.clear_history_confirmed)
         self.open_file.clicked.connect(lambda: self.open_path(False))
         self.open_folder.clicked.connect(lambda: self.open_path(True))
@@ -306,10 +313,15 @@ class QueuePanel(QWidget):
             _, controls = self.action_cells[task["id"]]
             active = self.is_active(task)
             resumable = state in ("paused", "failed", "cancelled", "interrupted")
-            controls["pause"].setEnabled(active)
-            controls["cancel"].setEnabled(active)
-            controls["resume"].setEnabled(resumable)
-            controls["resume"].setText("Resume" if state in ("paused", "interrupted") else "Retry")
+            toggle = controls["toggle"]
+            toggle.setText("Pause" if active else "Resume" if state == "paused" else "Retry")
+            toggle.setToolTip(
+                "Pause this download and keep resumable data" if active else
+                "Resume this paused download" if state == "paused" else
+                "Retry this download" if resumable else "")
+            toggle.setVisible(active or resumable)
+            toggle.setEnabled(active or resumable)
+            controls["cancel"].setVisible(active)
             controls["delete"].setEnabled(not active)
             controls["delete"].setToolTip(
                 "Pause or cancel this active download before deleting its history"
@@ -339,9 +351,12 @@ class QueuePanel(QWidget):
         state = task["state"] if task else ""
         self.open_file.setEnabled(state == "completed")
         self.open_folder.setEnabled(bool(task))
-        active_count = sum(self.is_active(entry) for entry in self.queue.tasks)
-        resumable_count = sum(task["state"] in ("paused", "failed", "cancelled", "interrupted")
-                              for task in self.queue.tasks)
+        selected = self.selected_tasks()
+        multiple = len(selected) > 1
+        self.bulk_toolbar.setVisible(multiple)
+        active_count = sum(self.is_active(entry) for entry in selected)
+        resumable_count = sum(entry["state"] in ("paused", "failed", "cancelled", "interrupted")
+                              for entry in selected)
         history_count = sum(not self.is_active(entry) for entry in self.queue.tasks)
         self.pause_all_button.setEnabled(active_count > 0)
         self.cancel_all_button.setEnabled(active_count > 0)
@@ -355,13 +370,11 @@ class QueuePanel(QWidget):
         buttons.setContentsMargins(4, 2, 4, 2)
         buttons.setSpacing(4)
         controls = {}
-        for key, title in (("pause", "Pause"), ("resume", "Resume"),
-                           ("cancel", "Cancel"), ("delete", "Delete")):
+        for key, title in (("toggle", "Pause"), ("cancel", "Cancel"), ("delete", "Delete")):
             button = QPushButton(title, cell)
-            button.setFixedSize({"pause": 56, "resume": 58, "cancel": 52, "delete": 48}[key], 28)
+            button.setFixedSize({"toggle": 68, "cancel": 54, "delete": 52}[key], 28)
             button.setToolTip({
-                "pause": "Pause this download and keep its resumable data",
-                "resume": "Resume this download",
+                "toggle": "Pause this download and keep its resumable data",
                 "cancel": "Cancel this download",
                 "delete": "Remove this entry from history (keeps downloaded files)",
             }[key])
@@ -379,16 +392,17 @@ class QueuePanel(QWidget):
         task = next((entry for entry in self.queue.tasks if entry["id"] == task_id), None)
         if not task:
             return
-        if action == "pause":
-            self.queue.pause(task)
+        if action == "toggle":
+            if self.is_active(task):
+                self.queue.pause(task)
+            else:
+                try:
+                    self.queue.retry(task)
+                    self.set_view("active")
+                except ValueError as error:
+                    self.message.setText(str(error))
         elif action == "cancel":
             self.queue.cancel(task)
-        elif action == "resume":
-            try:
-                self.queue.retry(task)
-                self.set_view("active")
-            except ValueError as error:
-                self.message.setText(str(error))
         elif action == "delete":
             if self.queue.delete_history(task):
                 self.message.setText("History entry deleted. Any downloaded file was kept.")
@@ -407,12 +421,39 @@ class QueuePanel(QWidget):
             if actions:
                 actions[0].deleteLater()
 
-    def cancel_all_confirmed(self):
+    def selected_tasks(self):
+        selected_ids = {row.data(0, Qt.ItemDataRole.UserRole) for row in self.tree.selectedItems()}
+        return [task for task in self.queue.tasks if task["id"] in selected_ids]
+
+    def pause_selected(self):
+        for task in self.selected_tasks():
+            if self.is_active(task):
+                self.queue.pause(task)
+
+    def resume_selected(self):
+        resumed = False
+        for task in self.selected_tasks():
+            if task["state"] not in ("paused", "failed", "cancelled", "interrupted"):
+                continue
+            try:
+                self.queue.retry(task)
+                resumed = True
+            except ValueError as error:
+                self.message.setText(str(error))
+        if resumed:
+            self.set_view("active")
+
+    def cancel_selected_confirmed(self):
+        tasks = [task for task in self.selected_tasks() if self.is_active(task)]
+        if not tasks:
+            return
         if QMessageBox.question(
-                self, "Cancel all downloads?", "Cancel every queued and running download?",
+                self, "Cancel selected downloads?",
+                f"Cancel {len(tasks)} selected queued or running download(s)?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
-            self.queue.cancel_all()
+            for task in tasks:
+                self.queue.cancel(task)
 
     def clear_history_confirmed(self):
         if QMessageBox.question(
@@ -434,13 +475,12 @@ class QueuePanel(QWidget):
         bar.setAccessibleName(f"Download progress for {task.get('config', {}).get('title') or 'video'}")
         bar.setRange(0, 100)
         bar.setValue(0)
-        bar.setMinimumWidth(44)
-        bar.setMaximumWidth(72)
+        bar.setMinimumWidth(90)
         detail_label = QLabel(cell)
         detail_label.setObjectName("muted")
         detail_label.setMinimumWidth(40)
-        line.addWidget(bar)
-        line.addWidget(detail_label, 1)
+        line.addWidget(bar, 6)
+        line.addWidget(detail_label, 4)
         self.tree.setItemWidget(self.rows[task["id"]], 2, cell)
         return bar, detail_label
 
